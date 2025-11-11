@@ -3,7 +3,6 @@
 
 #include <linux/init.h>
 #include "apk_sign.h"
-#include <linux/thread_info.h>
 
 void __init ksu_core_init(void);
 void ksu_core_exit(void);

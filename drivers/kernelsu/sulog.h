@@ -3,12 +3,9 @@
 
 #include <linux/types.h>
 #include <linux/version.h>
+#include <linux/crc32.h> // needed for function dedup_calc_hash
 
-#ifdef KSU_MODULE
-#define __SULOG_GATE 0
-#else
-#define __SULOG_GATE 1
-#endif
+#define __SULOG_GATE        1
 
 #if __SULOG_GATE
 extern struct timezone sys_tz;

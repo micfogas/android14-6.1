@@ -107,13 +107,12 @@ int cn10k_sq_aq_init(void *dev, u16 qidx, u16 sqb_aura)
 }
 
 #define NPA_MAX_BURST 16
-int cn10k_refill_pool_ptrs(void *dev, struct otx2_cq_queue *cq)
+void cn10k_refill_pool_ptrs(void *dev, struct otx2_cq_queue *cq)
 {
 	struct otx2_nic *pfvf = dev;
-	int cnt = cq->pool_ptrs;
 	u64 ptrs[NPA_MAX_BURST];
-	dma_addr_t bufptr;
 	int num_ptrs = 1;
+	dma_addr_t bufptr;
 
 	/* Refill pool with new buffers */
 	while (cq->pool_ptrs) {
@@ -132,7 +131,6 @@ int cn10k_refill_pool_ptrs(void *dev, struct otx2_cq_queue *cq)
 			num_ptrs = 1;
 		}
 	}
-	return cnt - cq->pool_ptrs;
 }
 
 void cn10k_sqe_flush(void *dev, struct otx2_snd_queue *sq, int size, int qidx)
@@ -352,12 +350,9 @@ int cn10k_free_matchall_ipolicer(struct otx2_nic *pfvf)
 	mutex_lock(&pfvf->mbox.lock);
 
 	/* Remove RQ's policer mapping */
-	for (qidx = 0; qidx < hw->rx_queues; qidx++) {
-		rc = cn10k_map_unmap_rq_policer(pfvf, qidx, hw->matchall_ipolicer, false);
-		if (rc)
-			dev_warn(pfvf->dev, "Failed to unmap RQ %d's policer (error %d).",
-				 qidx, rc);
-	}
+	for (qidx = 0; qidx < hw->rx_queues; qidx++)
+		cn10k_map_unmap_rq_policer(pfvf, qidx,
+					   hw->matchall_ipolicer, false);
 
 	rc = cn10k_free_leaf_profile(pfvf, hw->matchall_ipolicer);
 

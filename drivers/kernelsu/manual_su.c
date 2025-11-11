@@ -6,12 +6,13 @@
 #include <linux/uaccess.h>
 #include <linux/file.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/binfmts.h>
-#include "kernel_compat.h"
 #include "manual_su.h"
 #include "ksu.h"
 #include "allowlist.h"
 #include "manager.h"
+#include "allowlist.h"
 
 extern void escape_to_root_for_cmd_su(uid_t, pid_t);
 static bool current_verified = false;

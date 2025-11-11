@@ -6,6 +6,17 @@ build/
 local.properties
 .config
 .git.repo/*
+mkbootk
+10-*
+20-*
+30-*
+40-*
+50-*
+*.img
+sksu/
+KernelSU/
+susfs4ksu/
+
 # Build output
 out-dev/*
 

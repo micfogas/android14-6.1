@@ -9,7 +9,9 @@
 #include "linux/lsm_audit.h"
 #include "xfrm.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 #define SELINUX_POLICY_INSTEAD_SELINUX_SS
+#endif
 
 #define KERNEL_SU_DOMAIN "su"
 #define KERNEL_SU_FILE "ksu_file"
@@ -19,14 +21,23 @@
 static struct policydb *get_policydb(void)
 {
     struct policydb *db;
+// selinux_state does not exists before 4.19
+#ifdef KSU_COMPAT_USE_SELINUX_STATE
+#ifdef SELINUX_POLICY_INSTEAD_SELINUX_SS
     struct selinux_policy *policy = selinux_state.policy;
     db = &policy->policydb;
+#else
+    struct selinux_ss *ss = selinux_state.ss;
+    db = &ss->policydb;
+#endif
+#else
+    db = &policydb;
+#endif
     return db;
 }
 
 static DEFINE_MUTEX(ksu_rules);
-
-void apply_kernelsu_rules()
+void apply_kernelsu_rules(void)
 {
     struct policydb *db;
 
@@ -84,6 +95,7 @@ void apply_kernelsu_rules()
     ksu_allow(db, "init", "adb_data_file", "file", ALL);
     ksu_allow(db, "init", "adb_data_file", "dir", ALL); // #1289
     ksu_allow(db, "init", KERNEL_SU_DOMAIN, ALL, ALL);
+
     // we need to umount modules in zygote
     ksu_allow(db, "zygote", "adb_data_file", "dir", "search");
 
@@ -130,6 +142,15 @@ void apply_kernelsu_rules()
     // https://android-review.googlesource.com/c/platform/system/logging/+/3725346
     ksu_dontaudit(db, "untrusted_app", KERNEL_SU_DOMAIN, "dir", "getattr");
 
+#ifdef CONFIG_KSU_SUSFS
+    // Allow umount in zygote process without installing zygisk
+    ksu_allow(db, "zygote", "labeledfs", "filesystem", "unmount");
+    susfs_set_kernel_sid();
+    susfs_set_init_sid();
+    susfs_set_ksu_sid();
+    susfs_set_zygote_sid();
+#endif
+
     mutex_unlock(&ksu_rules);
 }
 
@@ -145,36 +166,32 @@ void apply_kernelsu_rules()
 #define CMD_TYPE_CHANGE 8
 #define CMD_GENFSCON 9
 
-#ifdef CONFIG_64BIT
-struct sepol_data {
-    u32 cmd;
-    u32 subcmd;
-    u64 field_sepol1;
-    u64 field_sepol2;
-    u64 field_sepol3;
-    u64 field_sepol4;
-    u64 field_sepol5;
-    u64 field_sepol6;
-    u64 field_sepol7;
-};
-#ifdef CONFIG_COMPAT
+// keep it!
 extern bool ksu_is_compat __read_mostly;
-struct sepol_compat_data {
-    u32 cmd;
-    u32 subcmd;
-    u32 field_sepol1;
-    u32 field_sepol2;
-    u32 field_sepol3;
-    u32 field_sepol4;
-    u32 field_sepol5;
-    u32 field_sepol6;
-    u32 field_sepol7;
-};
-#endif // CONFIG_COMPAT
+
+// armv7l kernel compat
+#ifdef CONFIG_64BIT
+#define usize    u64
 #else
+#define usize    u32
+#endif
+
 struct sepol_data {
     u32 cmd;
     u32 subcmd;
+    usize field_sepol1;
+    usize field_sepol2;
+    usize field_sepol3;
+    usize field_sepol4;
+    usize field_sepol5;
+    usize field_sepol6;
+    usize field_sepol7;
+};
+
+// ksud 32-bit on arm64 kernel
+struct __maybe_unused sepol_data_compat {
+    u32 cmd;
+    u32 subcmd;
     u32 field_sepol1;
     u32 field_sepol2;
     u32 field_sepol3;
@@ -183,7 +200,6 @@ struct sepol_data {
     u32 field_sepol6;
     u32 field_sepol7;
 };
-#endif // CONFIG_64BIT
 
 static int get_object(char *buf, char __user *user_object, size_t buf_sz,
               char **object)
@@ -207,9 +223,10 @@ extern int avc_ss_reset(u32 seqno);
 extern int avc_ss_reset(struct selinux_avc *avc, u32 seqno);
 #endif
 // reset avc cache table, otherwise the new rules will not take effect if already denied
-static void reset_avc_cache()
+static void reset_avc_cache(void)
 {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0) ||    \
+    !defined(KSU_COMPAT_USE_SELINUX_STATE)
     avc_ss_reset(0);
     selnl_notify_policyload(0);
     selinux_status_update_policyload(0);
@@ -233,26 +250,26 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
     if (!getenforce()) {
         pr_info("SELinux permissive or disabled when handle policy!\n");
     }
-    
+
     u32 cmd, subcmd;
     char __user *sepol1, *sepol2, *sepol3, *sepol4, *sepol5, *sepol6, *sepol7;
 
-#if defined(CONFIG_64BIT) && defined(CONFIG_COMPAT)
     if (unlikely(ksu_is_compat)) {
-        struct sepol_compat_data compat_data;
-        if (copy_from_user(&compat_data, arg4, sizeof(struct sepol_compat_data))) {
+        struct sepol_data_compat data_compat;
+        if (copy_from_user(&data_compat, arg4, sizeof(struct sepol_data_compat))) {
             pr_err("sepol: copy sepol_data failed.\n");
             return -1;
         }
-        sepol1 = compat_ptr(compat_data.field_sepol1);
-        sepol2 = compat_ptr(compat_data.field_sepol2);
-        sepol3 = compat_ptr(compat_data.field_sepol3);
-        sepol4 = compat_ptr(compat_data.field_sepol4);
-        sepol5 = compat_ptr(compat_data.field_sepol5);
-        sepol6 = compat_ptr(compat_data.field_sepol6);
-        sepol7 = compat_ptr(compat_data.field_sepol7);
-        cmd = compat_data.cmd;
-        subcmd = compat_data.subcmd;
+        pr_info("sepol: running in compat mode!\n");
+        sepol1 = compat_ptr(data_compat.field_sepol1);
+        sepol2 = compat_ptr(data_compat.field_sepol2);
+        sepol3 = compat_ptr(data_compat.field_sepol3);
+        sepol4 = compat_ptr(data_compat.field_sepol4);
+        sepol5 = compat_ptr(data_compat.field_sepol5);
+        sepol6 = compat_ptr(data_compat.field_sepol6);
+        sepol7 = compat_ptr(data_compat.field_sepol7);
+        cmd = data_compat.cmd;
+        subcmd = data_compat.subcmd;
     } else {
         struct sepol_data data;
         if (copy_from_user(&data, arg4, sizeof(struct sepol_data))) {
@@ -269,23 +286,6 @@ int handle_sepolicy(unsigned long arg3, void __user *arg4)
         cmd = data.cmd;
         subcmd = data.subcmd;
     }
-#else 
-    // basically for full native, say (64BIT=y COMPAT=n) || (64BIT=n)
-    struct sepol_data data;
-    if (copy_from_user(&data, arg4, sizeof(struct sepol_data))) {
-        pr_err("sepol: copy sepol_data failed.\n");
-        return -EINVAL;
-    }
-    sepol1 = data.field_sepol1;
-    sepol2 = data.field_sepol2;
-    sepol3 = data.field_sepol3;
-    sepol4 = data.field_sepol4;
-    sepol5 = data.field_sepol5;
-    sepol6 = data.field_sepol6;
-    sepol7 = data.field_sepol7;
-    cmd = data.cmd;
-    subcmd = data.subcmd;
-#endif
 
     mutex_lock(&ksu_rules);
 
