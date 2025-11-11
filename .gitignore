@@ -31,6 +31,10 @@ modules.bzl
 # Log/OS Files
 *.log
 
+# Orig files
+*.orig
+*.porig
+
 # Android Studio generated files and folders
 captures/
 .externalNativeBuild/
